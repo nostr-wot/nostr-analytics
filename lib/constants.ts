@@ -1,9 +1,7 @@
 // ── Connection URLs ────────────────────────────────────────────────
 
-export const CACHE_URL =
-  process.env.PRIMAL_CACHE_URL || "wss://cache2.primal.net/v1";
+export const CACHE_URL = "wss://cache2.primal.net/v1";
 export const RELAY_URLS: string[] = (
-  process.env.PRIMAL_RELAY_URLS ||
   [
     "wss://relay.damus.io",
     "wss://relay.primal.net",
