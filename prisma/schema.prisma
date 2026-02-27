@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../prisma/generated"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model TrackedNpub {
+  id            Int       @id @default(autoincrement())
+  npub          String    @unique
+  pubkeyHex     String    @unique
+  label         String?
+  addedAt       DateTime  @default(now())
+  lastFetchedAt DateTime?
+}
+
+model NostrEvent {
+  id        Int      @id @default(autoincrement())
+  eventId   String   @unique
+  pubkeyHex String
+  kind      Int
+  content   String
+  tags      String
+  sig       String
+  createdAt Int
+  fetchedAt DateTime @default(now())
+  source    String
+
+  @@index([pubkeyHex])
+  @@index([kind])
+  @@index([pubkeyHex, kind])
+  @@index([createdAt])
+}
+
+model EventSource {
+  id      Int      @id @default(autoincrement())
+  eventId String
+  relay   String
+  seenAt  DateTime @default(now())
+
+  @@unique([eventId, relay])
+  @@index([relay])
+  @@index([eventId])
+}
+
+model CacheResponse {
+  id           Int      @id @default(autoincrement())
+  pubkeyHex    String
+  queryType    String
+  responseKind Int
+  content      String
+  fetchedAt    DateTime @default(now()) @updatedAt
+
+  @@unique([pubkeyHex, queryType, responseKind])
+  @@index([pubkeyHex])
+  @@index([queryType])
+  @@index([pubkeyHex, queryType])
+}
