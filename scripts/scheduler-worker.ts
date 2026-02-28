@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { runCollectionCycle } from "../lib/collector";
 import { DEFAULT_FETCH_INTERVAL_MINUTES } from "../lib/constants";
+import { ensureRelaysExist } from "../lib/relay-health";
 
 const PID_FILE = path.resolve(process.cwd(), ".scheduler.pid");
 
@@ -26,7 +27,11 @@ function acquireLock(): void {
       process.exit(1);
     }
     console.log("[scheduler] Cleaning up stale PID file.");
-    fs.unlinkSync(PID_FILE);
+    try {
+      fs.unlinkSync(PID_FILE);
+    } catch (unlinkErr: unknown) {
+      if ((unlinkErr as NodeJS.ErrnoException).code !== "ENOENT") throw unlinkErr;
+    }
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
@@ -60,14 +65,14 @@ function releaseLock(): void {
 
 // -- Main -----------------------------------------------------------------
 
-let intervalHandle: ReturnType<typeof setInterval> | null = null;
+let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 let shuttingDown = false;
 
 function shutdown(): void {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log("[scheduler] Shutting down...");
-  if (intervalHandle) clearInterval(intervalHandle);
+  if (timeoutHandle) clearTimeout(timeoutHandle);
   releaseLock();
   process.exit(0);
 }
@@ -97,9 +102,23 @@ console.log(
   `[scheduler] Started. Fetching every ${intervalMinutes} minutes.`
 );
 
-// Run immediately
-runCollectionCycle().catch(console.error);
+async function runCycle() {
+  await runCollectionCycle().catch(console.error);
+}
 
-intervalHandle = setInterval(() => {
-  runCollectionCycle().catch(console.error);
-}, intervalMs);
+// Fix #8: Use tail-recursive setTimeout to prevent overlapping cycles
+async function runLoop() {
+  await runCycle();
+  if (!shuttingDown) {
+    timeoutHandle = setTimeout(runLoop, intervalMs);
+  }
+}
+
+// Seed Relay table, then start the loop
+ensureRelaysExist()
+  .then(() => runLoop())
+  .catch((err) => {
+    console.error("[scheduler] Fatal: failed to seed relays:", err);
+    releaseLock();
+    process.exit(1);
+  });

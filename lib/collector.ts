@@ -1,6 +1,5 @@
 import { prisma } from "./db";
 import {
-  connectWebSocket,
   sendCacheRequest,
   sendRelayRequest,
   waitForEose,
@@ -17,6 +16,7 @@ import {
 import type { NostrEventWire } from "./types";
 import { sanitizeContent } from "./content-filter";
 import { RelayPool } from "./relay-pool";
+import { saveRelayHealth } from "./relay-health";
 
 // ── Batch DB inserts ────────────────────────────────────────────────
 
@@ -96,18 +96,22 @@ async function storeCacheResponse(
   });
 }
 
-// ── Cache fetch (pipelined queries) ─────────────────────────────────
+// ── Cache fetch (pipelined queries, pooled connection) ───────────────
 
-async function fetchFromCache(pubkeyHex: string): Promise<{
+async function fetchFromCache(
+  pubkeyHex: string,
+  pool?: RelayPool
+): Promise<{
   newEvents: number;
   newCacheResponses: number;
 }> {
   let newEvents = 0;
   let newCacheResponses = 0;
+  const usePool = !!pool;
 
   let ws;
   try {
-    ws = await connectWebSocket(CACHE_URL);
+    ws = usePool ? await pool!.get(CACHE_URL) : (await import("./websocket").then(m => m.connectWebSocket(CACHE_URL)));
   } catch (err) {
     console.error(`[collector] Failed to connect to cache server:`, err);
     return { newEvents, newCacheResponses };
@@ -142,7 +146,7 @@ async function fetchFromCache(pubkeyHex: string): Promise<{
       }
     }
   } finally {
-    ws.close();
+    if (!usePool) ws.close();
   }
 
   return { newEvents, newCacheResponses };
@@ -161,7 +165,7 @@ async function fetchFromSingleRelay(
 
   let ws;
   try {
-    ws = usePool ? await pool!.get(relayUrl) : await connectWebSocket(relayUrl);
+    ws = usePool ? await pool!.get(relayUrl) : (await import("./websocket").then(m => m.connectWebSocket(relayUrl)));
   } catch (err) {
     console.error(`[collector] Failed to connect to ${relayUrl}:`, err);
     return { newEvents: 0 };
@@ -222,8 +226,27 @@ async function fetchFromRelays(
   pubkeyHex: string,
   pool?: RelayPool
 ): Promise<{ newEvents: number }> {
+  // Filter out relays that are backed off
+  const now = new Date();
+  const relayStates = await prisma.relay.findMany({
+    where: { url: { in: RELAY_URLS } },
+    select: { url: true, backoffUntil: true },
+  });
+  const backoffMap = new Map(relayStates.map((r) => [r.url, r.backoffUntil]));
+
+  const activeUrls: string[] = [];
+  for (const url of RELAY_URLS) {
+    const until = backoffMap.get(url);
+    if (until && until > now) {
+      const hhmm = until.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+      console.log(`[collector] Skipping ${new URL(url).hostname} (backed off until ${hhmm})`);
+    } else {
+      activeUrls.push(url);
+    }
+  }
+
   const results = await Promise.all(
-    RELAY_URLS.map((url) => fetchFromSingleRelay(url, pubkeyHex, pool))
+    activeUrls.map((url) => fetchFromSingleRelay(url, pubkeyHex, pool))
   );
   const newEvents = results.reduce((sum, r) => sum + r.newEvents, 0);
   return { newEvents };
@@ -241,7 +264,7 @@ export async function fetchAllForPubkey(
   console.log(`[collector] Fetching data for ${pubkeyHex.slice(0, 8)}...`);
 
   const [cacheResult, relayResult] = await Promise.all([
-    fetchFromCache(pubkeyHex),
+    fetchFromCache(pubkeyHex, pool),
     fetchFromRelays(pubkeyHex, pool),
   ]);
 
@@ -309,6 +332,8 @@ export async function runCollectionCycle(): Promise<void> {
       }
     });
   } finally {
+    // Save health results from actual connections before closing
+    await saveRelayHealth(pool.healthResults).catch(console.error);
     pool.closeAll();
   }
 

@@ -1,9 +1,22 @@
 import WebSocket from "ws";
 import { connectWebSocket } from "./websocket";
 
+export interface ConnectionResult {
+  url: string;
+  status: "ok" | "error";
+  latencyMs: number | null;
+  error?: string;
+}
+
 export class RelayPool {
   private connections = new Map<string, WebSocket>();
   private pending = new Map<string, Promise<WebSocket>>();
+  private _healthResults = new Map<string, ConnectionResult>();
+
+  /** Health results recorded during this pool's lifetime (one per URL). */
+  get healthResults(): ConnectionResult[] {
+    return [...this._healthResults.values()];
+  }
 
   async get(url: string): Promise<WebSocket> {
     const existing = this.connections.get(url);
@@ -15,12 +28,23 @@ export class RelayPool {
     const inflight = this.pending.get(url);
     if (inflight) return inflight;
 
+    const start = Date.now();
     const promise = connectWebSocket(url).then((ws) => {
       this.connections.set(url, ws);
       this.pending.delete(url);
 
-      // Multiple npubs share one connection, each adding a message listener
-      ws.setMaxListeners(50);
+      // Record health on first successful connect
+      if (!this._healthResults.has(url)) {
+        this._healthResults.set(url, {
+          url,
+          status: "ok",
+          latencyMs: Date.now() - start,
+        });
+      }
+
+      // Multiple npubs share one connection, each adding message listeners
+      // Cache queries add ~13 listeners per npub, relays add fewer
+      ws.setMaxListeners(100);
 
       ws.on("close", () => this.connections.delete(url));
       ws.on("error", () => this.connections.delete(url));
@@ -34,6 +58,17 @@ export class RelayPool {
       return await promise;
     } catch (err) {
       this.pending.delete(url);
+
+      // Record health on first failed connect
+      if (!this._healthResults.has(url)) {
+        this._healthResults.set(url, {
+          url,
+          status: "error",
+          latencyMs: null,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+
       throw err;
     }
   }

@@ -15,8 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Primal Collector",
-  description: "Nostr event collector for Primal relay and cache server",
+  title: "Nostr Analytics",
+  description: "Nostr event analytics and collection dashboard",
+  robots: { index: true, follow: false },
 };
 
 export default function RootLayout({
@@ -32,9 +33,17 @@ export default function RootLayout({
         <AuthProvider>
           <nav className="border-b border-zinc-800 px-6 py-4">
             <div className="mx-auto flex max-w-6xl items-center justify-between">
-              <a href="/" className="text-lg font-semibold text-white">
-                Primal Collector
-              </a>
+              <div className="flex items-center gap-6">
+                <a href="/" className="text-lg font-semibold text-white">
+                  Nostr Analytics
+                </a>
+                <a
+                  href="/relays"
+                  className="text-sm text-zinc-400 transition-colors hover:text-white"
+                >
+                  Relays
+                </a>
+              </div>
               <LoginButton />
             </div>
           </nav>

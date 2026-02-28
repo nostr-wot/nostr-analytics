@@ -45,6 +45,29 @@ model EventSource {
   @@index([eventId])
 }
 
+model Relay {
+  id                Int       @id @default(autoincrement())
+  url               String    @unique
+  firstSeenAt       DateTime  @default(now())
+  consecutiveErrors Int       @default(0)
+  lastErrorAt       DateTime?
+  backoffUntil      DateTime?
+}
+
+model RelayCheck {
+  id            Int      @id @default(autoincrement())
+  relay         String
+  status        String   // "ok" | "error"
+  latencyMs     Int?     // ms to connect, null if failed
+  error         String?  // error message if failed
+  errorCategory String?  // classified error type
+  checkedAt     DateTime @default(now())
+
+  @@index([relay, checkedAt])
+  @@index([checkedAt])
+  @@index([relay, errorCategory])
+}
+
 model CacheResponse {
   id           Int      @id @default(autoincrement())
   pubkeyHex    String
