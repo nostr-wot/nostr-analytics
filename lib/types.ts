@@ -97,6 +97,8 @@ export interface AnalyticsData {
   totalEvents: number;
   dateRange: { earliest: number; latest: number };
   suggestedTimezoneOffset: number;
+  timezoneConfidence: "low" | "medium" | "high" | null;
+  timezoneFlagged: boolean;
 }
 
 // ── UI types ───────────────────────────────────────────────────────

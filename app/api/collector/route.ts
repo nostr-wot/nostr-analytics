@@ -9,13 +9,16 @@ import { requireAuth } from "@/lib/auth";
 
 // GET /api/collector - get scheduler status + stats
 export async function GET() {
-  const [running, totalEvents, totalCacheResponses] = await Promise.all([
+  const [running, globalStats] = await Promise.all([
     Promise.resolve(isSchedulerRunning()),
-    prisma.nostrEvent.count(),
-    prisma.cacheResponse.count(),
+    prisma.globalStats.findUnique({ where: { id: 1 } }),
   ]);
 
-  return NextResponse.json({ running, totalEvents, totalCacheResponses });
+  return NextResponse.json({
+    running,
+    totalEvents: globalStats?.totalEvents ?? 0,
+    totalCacheResponses: globalStats?.totalCacheResponses ?? 0,
+  });
 }
 
 // POST /api/collector - start/stop scheduler

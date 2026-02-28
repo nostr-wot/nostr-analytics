@@ -3,6 +3,8 @@ import path from "node:path";
 import { runCollectionCycle } from "../lib/collector";
 import { DEFAULT_FETCH_INTERVAL_MINUTES } from "../lib/constants";
 import { ensureRelaysExist } from "../lib/relay-health";
+import { runTimezoneEstimation } from "../lib/timezone-cron";
+import { runStatsComputation } from "../lib/stats-cron";
 
 const PID_FILE = path.resolve(process.cwd(), ".scheduler.pid");
 
@@ -104,6 +106,8 @@ console.log(
 
 async function runCycle() {
   await runCollectionCycle().catch(console.error);
+  await runTimezoneEstimation().catch(console.error);
+  await runStatsComputation().catch(console.error);
 }
 
 // Fix #8: Use tail-recursive setTimeout to prevent overlapping cycles
