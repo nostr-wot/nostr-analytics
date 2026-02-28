@@ -1,4 +1,3 @@
-const T_CUTOFF = 5;
 const PEAK_PRIOR = 15.0;
 
 interface EstimationInput {
@@ -13,22 +12,6 @@ export interface EstimationResult {
   daySpread: number;
   stddevHours: number;
   flaggedUnreliable: boolean;
-}
-
-function getAdjustedHourAndDay(ts: number): { hour: number; dayKey: string } {
-  const date = new Date(ts * 1000);
-  const h = date.getUTCHours() + date.getUTCMinutes() / 60;
-
-  if (h < T_CUTOFF) {
-    // Attribute to previous day's session
-    const prevDay = new Date(ts * 1000);
-    prevDay.setUTCDate(prevDay.getUTCDate() - 1);
-    const dayKey = prevDay.toISOString().slice(0, 10);
-    return { hour: h - 24, dayKey };
-  }
-
-  const dayKey = date.toISOString().slice(0, 10);
-  return { hour: h, dayKey };
 }
 
 function mean(values: number[]): number {
@@ -52,42 +35,35 @@ export function estimateTimezone(
 
   if (timestamps.length === 0) return null;
 
-  // a) Adjust hours with circadian continuity correction
+  // Extract raw UTC hours and distinct days
   const days = new Set<string>();
-  const adjustedHours: number[] = [];
+  const hours: number[] = [];
 
   for (const ts of timestamps) {
-    const { hour, dayKey } = getAdjustedHourAndDay(ts);
-    adjustedHours.push(hour);
-    days.add(dayKey);
+    const date = new Date(ts * 1000);
+    const h = date.getUTCHours() + date.getUTCMinutes() / 60;
+    hours.push(h);
+    days.add(date.toISOString().slice(0, 10));
   }
 
-  const N = adjustedHours.length;
+  const N = hours.length;
   const D = days.size;
 
-  // c) Minimum data check
+  // Minimum data check
   if (N < 5 || D < 2) return null;
 
-  // b) Compute statistics
-  const muActivity = mean(adjustedHours);
-  const sigma = stddev(adjustedHours, muActivity);
+  // Compute statistics on raw UTC hours
+  const muActivity = mean(hours);
+  const sigma = stddev(hours, muActivity);
 
-  // d) Score candidate offsets
-  let bestOffset = 0;
-  let bestScore = -Infinity;
+  // Estimate offset: place mean activity at 3 PM local
+  const rawOffset = PEAK_PRIOR - muActivity;
+  // Clamp to valid range and snap to 0.5h
+  const estimatedUtcOffset = snapToHalf(
+    Math.max(-12, Math.min(14, rawOffset))
+  );
 
-  for (let z = -12; z <= 14; z += 0.5) {
-    const localPeak = muActivity + z;
-    const score = -Math.abs(localPeak - PEAK_PRIOR);
-    if (score > bestScore) {
-      bestScore = score;
-      bestOffset = z;
-    }
-  }
-
-  const estimatedUtcOffset = snapToHalf(bestOffset);
-
-  // e) Confidence & reliability
+  // Confidence & reliability
   const flaggedUnreliable = sigma > 4.0;
 
   let confidence: "low" | "medium" | "high";
