@@ -10,32 +10,28 @@ export async function GET() {
     orderBy: { addedAt: "desc" },
   });
 
-  const withStats = await Promise.all(
-    npubs.map(async (n) => {
-      const eventCount = await prisma.nostrEvent.count({
-        where: { pubkeyHex: n.pubkeyHex },
-      });
-      const cacheCount = await prisma.cacheResponse.count({
-        where: { pubkeyHex: n.pubkeyHex },
-      });
-
-      // Get latest kind 0 (Metadata) event for profile info
-      let profile: NostrProfile | null = null;
-      const kind0 = await prisma.nostrEvent.findFirst({
-        where: { pubkeyHex: n.pubkeyHex, kind: 0 },
-        orderBy: { createdAt: "desc" },
-      });
-      if (kind0) {
-        try {
-          profile = JSON.parse(kind0.content);
-        } catch {
-          // invalid JSON in kind 0 content
-        }
+  const withStats = npubs.map((n) => {
+    let profile: NostrProfile | null = null;
+    if (n.cachedProfile) {
+      try {
+        profile = JSON.parse(n.cachedProfile);
+      } catch {
+        // invalid JSON
       }
+    }
 
-      return { ...n, eventCount, cacheCount, profile };
-    })
-  );
+    return {
+      id: n.id,
+      npub: n.npub,
+      pubkeyHex: n.pubkeyHex,
+      label: n.label,
+      addedAt: n.addedAt,
+      lastFetchedAt: n.lastFetchedAt,
+      eventCount: n.cachedEventCount,
+      cacheCount: n.cachedCacheCount,
+      profile,
+    };
+  });
 
   return NextResponse.json(withStats);
 }

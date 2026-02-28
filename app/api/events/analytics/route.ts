@@ -14,29 +14,9 @@ interface BoundaryRow {
   lastMinute: number | bigint;
 }
 
-interface StatsRow {
-  cnt: number | bigint;
-  minCreatedAt: number | null;
-  maxCreatedAt: number | null;
-}
-
-interface RelayRow {
-  relay: string;
-  cnt: number | bigint;
-}
-
 function buildTzModifier(offset: number): string {
   const sign = offset >= 0 ? "+" : "-";
   return `${sign}${Math.abs(offset)} hours`;
-}
-
-function computeSuggestedOffset(boundaryRows: BoundaryRow[]): number {
-  if (boundaryRows.length === 0) return 0;
-  const firstHours = boundaryRows.map((r) => Number(r.firstMinute) / 60);
-  firstHours.sort((a, b) => a - b);
-  const median = firstHours[Math.floor(firstHours.length / 2)];
-  const offset = Math.round(8 - median);
-  return Math.max(-12, Math.min(14, offset));
 }
 
 // GET /api/events/analytics?pubkey=hex&tz=0&kinds=1,7&relays=wss://...
@@ -87,25 +67,12 @@ export async function GET(request: NextRequest) {
   // Combined filter params (kind first, then relay — matches clause order)
   const filterParams = [...kindParams, ...relayParams];
 
-  // First, get UTC boundary rows for timezone guess (always unfiltered, UTC)
-  const utcBoundaryRows = await prisma.$queryRawUnsafe<BoundaryRow[]>(
-    `SELECT
-      date(createdAt, 'unixepoch') AS d,
-      MIN(CAST(strftime('%H', datetime(createdAt, 'unixepoch')) AS INTEGER) * 60
-        + CAST(strftime('%M', datetime(createdAt, 'unixepoch')) AS INTEGER)) AS firstMinute,
-      MAX(CAST(strftime('%H', datetime(createdAt, 'unixepoch')) AS INTEGER) * 60
-        + CAST(strftime('%M', datetime(createdAt, 'unixepoch')) AS INTEGER)) AS lastMinute
-    FROM NostrEvent
-    WHERE pubkeyHex = ?
-    GROUP BY d
-    ORDER BY d`,
-    pubkey
-  );
-
-  const suggestedTimezoneOffset = computeSuggestedOffset(utcBoundaryRows);
-
-  const [heatmapRows, kindRows, relayRows, boundaryRows, statsRows] =
+  // Pre-computed lookups + filter-dependent live queries in parallel
+  const [tzEstimate, pubkeyStats, heatmapRows, boundaryRows] =
     await Promise.all([
+      prisma.timezoneEstimate.findUnique({ where: { pubkeyHex: pubkey } }),
+      prisma.pubkeyStats.findUnique({ where: { pubkeyHex: pubkey } }),
+
       // Heatmap: count by day-of-week x hour (with tz offset + filters)
       prisma.$queryRawUnsafe<HeatmapRow[]>(
         `SELECT
@@ -119,25 +86,6 @@ export async function GET(request: NextRequest) {
         tzMod,
         pubkey,
         ...filterParams
-      ),
-
-      // Kind distribution — always unfiltered (acts as menu for kind pills)
-      prisma.nostrEvent.groupBy({
-        by: ["kind"],
-        where: { pubkeyHex: pubkey },
-        _count: { kind: true },
-        orderBy: { _count: { kind: "desc" } },
-      }),
-
-      // Relay distribution — always unfiltered (acts as menu for relay pills)
-      prisma.$queryRawUnsafe<RelayRow[]>(
-        `SELECT es.relay, COUNT(DISTINCT es.eventId) AS cnt
-        FROM EventSource es
-        JOIN NostrEvent ne ON ne.eventId = es.eventId
-        WHERE ne.pubkeyHex = ?
-        GROUP BY es.relay
-        ORDER BY cnt DESC`,
-        pubkey
       ),
 
       // Daily first/last event minute-of-day (with tz offset + filters)
@@ -160,55 +108,45 @@ export async function GET(request: NextRequest) {
         pubkey,
         ...filterParams
       ),
-
-      // Total count + date range (with filters)
-      prisma.$queryRawUnsafe<StatsRow[]>(
-        `SELECT
-          COUNT(*) AS cnt,
-          MIN(createdAt) AS minCreatedAt,
-          MAX(createdAt) AS maxCreatedAt
-        FROM NostrEvent
-        WHERE pubkeyHex = ? ${kindClause} ${relayClause}`,
-        pubkey,
-        ...filterParams
-      ),
     ]);
 
-  const heatmap: HeatmapCell[] = heatmapRows.map((r) => ({
+  const suggestedTimezoneOffset = tzEstimate?.estimatedUtcOffset ?? 0;
+  const timezoneConfidence = (tzEstimate?.confidence as "low" | "medium" | "high") ?? null;
+  const timezoneFlagged = tzEstimate?.flaggedUnreliable ?? false;
+
+  const heatmap: HeatmapCell[] = heatmapRows.map((r: HeatmapRow) => ({
     dayOfWeek: Number(r.dow),
     hour: Number(r.hour),
     count: Number(r.cnt),
   }));
 
-  const kindDistribution = kindRows.map((k) => ({
-    kind: k.kind,
-    count: Number(k._count.kind),
-  }));
+  // Kind + relay distribution from pre-computed PubkeyStats
+  const kindDistribution = pubkeyStats
+    ? JSON.parse(pubkeyStats.kindDistribution)
+    : [];
+  const relayDistribution = pubkeyStats
+    ? JSON.parse(pubkeyStats.relayDistribution)
+    : [];
 
-  const relayDistribution = relayRows.map((r) => ({
-    relay: r.relay,
-    count: Number(r.cnt),
-  }));
-
-  const dailyBoundaries: DailyBoundary[] = boundaryRows.map((r) => ({
+  const dailyBoundaries: DailyBoundary[] = boundaryRows.map((r: BoundaryRow) => ({
     date: r.d,
     firstHour: Number(r.firstMinute) / 60,
     lastHour: Number(r.lastMinute) / 60,
   }));
-
-  const statsRow = statsRows[0];
 
   const data: AnalyticsData = {
     heatmap,
     kindDistribution,
     relayDistribution,
     dailyBoundaries,
-    totalEvents: Number(statsRow?.cnt ?? 0),
+    totalEvents: pubkeyStats?.totalEvents ?? 0,
     dateRange: {
-      earliest: statsRow?.minCreatedAt ?? 0,
-      latest: statsRow?.maxCreatedAt ?? 0,
+      earliest: pubkeyStats?.earliestEvent ?? 0,
+      latest: pubkeyStats?.latestEvent ?? 0,
     },
     suggestedTimezoneOffset,
+    timezoneConfidence,
+    timezoneFlagged,
   };
 
   return NextResponse.json(data);

@@ -8,12 +8,16 @@ datasource db {
 }
 
 model TrackedNpub {
-  id            Int       @id @default(autoincrement())
-  npub          String    @unique
-  pubkeyHex     String    @unique
-  label         String?
-  addedAt       DateTime  @default(now())
-  lastFetchedAt DateTime?
+  id               Int       @id @default(autoincrement())
+  npub             String    @unique
+  pubkeyHex        String    @unique
+  label            String?
+  addedAt          DateTime  @default(now())
+  lastFetchedAt    DateTime?
+  cachedEventCount Int       @default(0)
+  cachedCacheCount Int       @default(0)
+  cachedProfile    String?   // JSON: NostrProfile
+  statsComputedAt  DateTime?
 }
 
 model NostrEvent {
@@ -72,6 +76,46 @@ model RelayCheck {
   @@index([relay, checkedAt])
   @@index([checkedAt])
   @@index([relay, errorCategory])
+}
+
+model TimezoneEstimate {
+  id                  Int      @id @default(autoincrement())
+  pubkeyHex           String   @unique
+  estimatedUtcOffset  Float
+  confidence          String   // "low" | "medium" | "high"
+  activityPeakUtc     Float
+  eventCount          Int
+  daySpread           Int
+  stddevHours         Float
+  flaggedUnreliable   Boolean  @default(false)
+  lastComputedAt      DateTime @default(now())
+}
+
+model PubkeyStats {
+  id                Int      @id @default(autoincrement())
+  pubkeyHex         String   @unique
+  kindDistribution  String   // JSON: [{kind, count}]
+  relayDistribution String   // JSON: [{relay, count}]
+  totalEvents       Int
+  earliestEvent     Int
+  latestEvent       Int
+  computedAt        DateTime @default(now())
+}
+
+model RelaySnapshot {
+  id         Int      @id @default(autoincrement())
+  relay      String   @unique
+  uptime24h  Float?
+  uptime7d   Float?
+  eventCount Int      @default(0)
+  computedAt DateTime @default(now())
+}
+
+model GlobalStats {
+  id                  Int      @id @default(1)
+  totalEvents         Int      @default(0)
+  totalCacheResponses Int      @default(0)
+  computedAt          DateTime @default(now())
 }
 
 model CacheResponse {
