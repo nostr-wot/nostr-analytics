@@ -137,7 +137,7 @@ async function fetchFromCache(
       const query = CACHE_QUERIES[i];
       const { events, cacheResponses } = results[i];
 
-      const stored = await storeNostrEventsBatch(events, "cache");
+      const stored = await storeNostrEventsBatch(events, CACHE_URL);
       newEvents += stored;
 
       for (const cr of cacheResponses) {

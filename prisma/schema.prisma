@@ -27,6 +27,7 @@ model NostrEvent {
   createdAt Int
   fetchedAt DateTime @default(now())
   source    String
+  sourceRelay Relay  @relation(fields: [source], references: [url])
 
   @@index([pubkeyHex])
   @@index([kind])
@@ -39,6 +40,7 @@ model EventSource {
   eventId String
   relay   String
   seenAt  DateTime @default(now())
+  relayRef Relay   @relation(fields: [relay], references: [url])
 
   @@unique([eventId, relay])
   @@index([relay])
@@ -46,12 +48,15 @@ model EventSource {
 }
 
 model Relay {
-  id                Int       @id @default(autoincrement())
-  url               String    @unique
-  firstSeenAt       DateTime  @default(now())
-  consecutiveErrors Int       @default(0)
+  id                Int            @id @default(autoincrement())
+  url               String         @unique
+  firstSeenAt       DateTime       @default(now())
+  consecutiveErrors Int            @default(0)
   lastErrorAt       DateTime?
   backoffUntil      DateTime?
+  nostrEvents       NostrEvent[]
+  eventSources      EventSource[]
+  relayChecks       RelayCheck[]
 }
 
 model RelayCheck {
@@ -62,6 +67,7 @@ model RelayCheck {
   error         String?  // error message if failed
   errorCategory String?  // classified error type
   checkedAt     DateTime @default(now())
+  relayRef      Relay    @relation(fields: [relay], references: [url])
 
   @@index([relay, checkedAt])
   @@index([checkedAt])
