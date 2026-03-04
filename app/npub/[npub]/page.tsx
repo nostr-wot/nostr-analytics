@@ -17,15 +17,21 @@ import EventCard from "../../components/EventCard";
 import CacheResponseCard from "../../components/CacheResponseCard";
 import ProfileHeader from "../../components/ProfileHeader";
 import AnalyticsTab from "../../components/AnalyticsTab";
+import ProfileActionBar from "../../components/ProfileActionBar";
 
 export default function NpubDetailPage() {
   const params = useParams();
   const npub = params.npub as string;
-  const { getByNpub } = useNpubCache();
+  const { getByNpub, refresh } = useNpubCache();
   const npubData = getByNpub(npub);
   const pubkeyHex = npubData?.pubkeyHex ?? "";
 
-  const [tab, setTab] = useState<DetailTab>("events");
+  const [tab, setTab] = useState<DetailTab>(() => {
+    if (typeof window !== "undefined" && window.location.hash === "#analytics") {
+      return "analytics";
+    }
+    return "events";
+  });
   const [kinds, setKinds] = useState<KindCount[]>([]);
   const [selectedKind, setSelectedKind] = useState<number | null>(null);
   const [events, setEvents] = useState<StoredNostrEvent[]>([]);
@@ -50,6 +56,23 @@ export default function NpubDetailPage() {
       setPage(1);
     }, 300);
   };
+
+  // Sync tab ↔ URL hash
+  useEffect(() => {
+    if (tab === "analytics") {
+      window.history.replaceState(null, "", `#analytics`);
+    } else if (window.location.hash === "#analytics") {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, [tab]);
+
+  useEffect(() => {
+    const onHashChange = () => {
+      if (window.location.hash === "#analytics") setTab("analytics");
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   const fetchKinds = useCallback(async () => {
     if (!pubkeyHex) return;
@@ -110,6 +133,7 @@ export default function NpubDetailPage() {
   return (
     <div className="space-y-6">
       <ProfileHeader npubData={npubData} npub={npub} pubkeyHex={pubkeyHex} />
+      <ProfileActionBar pubkeyHex={pubkeyHex} onProfileReloaded={refresh} />
 
       {/* Tabs */}
       <div className="flex gap-2 border-b border-zinc-800 pb-0">
@@ -204,7 +228,7 @@ export default function NpubDetailPage() {
 
       {/* Content */}
       {tab === "analytics" ? (
-        <AnalyticsTab pubkeyHex={pubkeyHex} />
+        <AnalyticsTab pubkeyHex={pubkeyHex} npub={npub} />
       ) : loading ? (
         <p className="text-sm text-zinc-500">Loading...</p>
       ) : tab === "events" ? (
