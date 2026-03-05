@@ -28,12 +28,7 @@ export default function NpubDetailPage() {
   const npubData = getByNpub(npub);
   const pubkeyHex = npubData?.pubkeyHex ?? "";
 
-  const [tab, setTab] = useState<DetailTab>(() => {
-    if (typeof window !== "undefined" && window.location.hash === "#analytics") {
-      return "analytics";
-    }
-    return "events";
-  });
+  const [tab, setTab] = useState<DetailTab>("events");
   const [kinds, setKinds] = useState<KindCount[]>([]);
   const [selectedKind, setSelectedKind] = useState<number | null>(null);
   const [events, setEvents] = useState<StoredNostrEvent[]>([]);
@@ -70,7 +65,9 @@ export default function NpubDetailPage() {
     }
   }, [tab]);
 
+  // Read hash on mount + listen for changes
   useEffect(() => {
+    if (window.location.hash === "#analytics") setTab("analytics");
     const onHashChange = () => {
       if (window.location.hash === "#analytics") setTab("analytics");
     };
