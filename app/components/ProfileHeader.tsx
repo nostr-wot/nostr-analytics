@@ -15,7 +15,7 @@ export default function ProfileHeader({
   return (
     <div className="space-y-4">
       {/* Back link */}
-      <a href="/" className="text-sm text-zinc-400 hover:text-zinc-200">
+      <a href="/npubs" className="text-sm text-zinc-400 hover:text-zinc-200">
         &larr; Back
       </a>
 

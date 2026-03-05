@@ -32,6 +32,12 @@ export default function RootLayout({
                   Nostr Analytics
                 </a>
                 <a
+                  href="/npubs"
+                  className="text-sm text-zinc-400 transition-colors hover:text-white"
+                >
+                  Npubs
+                </a>
+                <a
                   href="/relays"
                   className="text-sm text-zinc-400 transition-colors hover:text-white"
                 >
