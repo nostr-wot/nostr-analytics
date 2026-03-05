@@ -85,7 +85,7 @@ export default function NpubTable({
                   )}
                   <td className="py-3 pr-4">
                     <a
-                      href={`/npub/${n.npub}`}
+                      href={`/npubs/${n.npub}`}
                       className="flex items-center gap-3 group"
                     >
                       {n.profile?.picture ? (

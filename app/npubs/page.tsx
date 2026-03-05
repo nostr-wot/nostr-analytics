@@ -5,10 +5,10 @@ import type { ToastMessage } from "@/lib/types";
 import { TOAST_DURATION_MS } from "@/lib/constants";
 import { useNpubCache } from "@/lib/npub-cache";
 import { useAuth } from "@/lib/auth-context";
-import MessageBanner from "./components/MessageBanner";
-import AddNpubForm from "./components/AddNpubForm";
-import NpubTable from "./components/NpubTable";
-import SchedulerLog from "./components/SchedulerLog";
+import MessageBanner from "../components/MessageBanner";
+import AddNpubForm from "../components/AddNpubForm";
+import NpubTable from "../components/NpubTable";
+import SchedulerLog from "../components/SchedulerLog";
 
 export default function Home() {
   const { isAdmin } = useAuth();
