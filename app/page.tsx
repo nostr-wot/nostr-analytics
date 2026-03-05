@@ -113,7 +113,8 @@ export default async function HomePage() {
       {/* Section 1: Hero */}
       <section className="pt-8 pb-4 text-center">
         <h1 className="text-4xl font-bold tracking-tight text-white sm:text-5xl">
-          Nostr Analytics
+          Nostr WoT{" "}
+          <span className="text-zinc-400">Analytics</span>
         </h1>
         <p className="mx-auto mt-4 max-w-2xl text-lg text-zinc-400">
           Monitor relay health, track event distribution, and analyze npub
