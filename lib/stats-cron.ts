@@ -1,4 +1,7 @@
 import { prisma } from "@/lib/db";
+import { analyzeRelayHealth } from "@/lib/relay-health-analyzer";
+import { computeTimezoneTimeline } from "@/lib/timezone-estimator";
+import type { Nip65Relay, RelayCount } from "@/lib/types";
 
 interface KindRow {
   kind: number;
@@ -132,6 +135,7 @@ export async function recomputeStatsForPubkey(pubkeyHex: string): Promise<void> 
 
   // Compute NIP-65 relay list with markers, health, and event percentages
   let nip65Relays: string | null = null;
+  let relayHealthScore: string | null = null;
   const nip65Row = await prisma.$queryRawUnsafe<{ tags: string }[]>(
     `SELECT tags FROM NostrEvent
      WHERE pubkeyHex = ? AND kind = 10002
@@ -196,9 +200,30 @@ export async function recomputeStatsForPubkey(pubkeyHex: string): Promise<void> 
         });
 
         nip65Relays = JSON.stringify(nip65List);
+
+        // Compute relay health report
+        const relayHealthReport = analyzeRelayHealth(
+          nip65List as Nip65Relay[],
+          relayDistribution as RelayCount[],
+          totalEvents,
+        );
+        relayHealthScore = JSON.stringify(relayHealthReport);
       }
     } catch {
       // invalid JSON, leave null
+    }
+  }
+
+  // Compute timezone timeline (monthly timezone estimates)
+  let timezoneTimeline: string | null = null;
+  const allTimestamps = await prisma.$queryRawUnsafe<{ createdAt: number }[]>(
+    `SELECT createdAt FROM NostrEvent WHERE pubkeyHex = ? ORDER BY createdAt`,
+    pubkeyHex
+  );
+  if (allTimestamps.length > 0) {
+    const timeline = computeTimezoneTimeline(allTimestamps.map((r) => r.createdAt));
+    if (timeline.length > 0) {
+      timezoneTimeline = JSON.stringify(timeline);
     }
   }
 
@@ -210,6 +235,8 @@ export async function recomputeStatsForPubkey(pubkeyHex: string): Promise<void> 
       relayDistribution: JSON.stringify(relayDistribution),
       dmActivityDistribution,
       nip65Relays,
+      relayHealthScore,
+      timezoneTimeline,
       totalEvents,
       earliestEvent: stats?.minCreatedAt ?? 0,
       latestEvent: stats?.maxCreatedAt ?? 0,
@@ -219,6 +246,8 @@ export async function recomputeStatsForPubkey(pubkeyHex: string): Promise<void> 
       relayDistribution: JSON.stringify(relayDistribution),
       dmActivityDistribution,
       nip65Relays,
+      relayHealthScore,
+      timezoneTimeline,
       totalEvents,
       earliestEvent: stats?.minCreatedAt ?? 0,
       latestEvent: stats?.maxCreatedAt ?? 0,
