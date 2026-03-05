@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import type { HeatmapCell, DailyBoundary, AnalyticsData, DmHourlyActivity, DmAnalytics, RelayMonthCount, Nip65Relay } from "@/lib/types";
+import type { HeatmapCell, DailyBoundary, AnalyticsData, DmHourlyActivity, DmAnalytics, RelayMonthCount, Nip65Relay, RelayHealthReport, TimezoneWindow } from "@/lib/types";
 
 interface HeatmapRow {
   dow: string | number;
@@ -198,6 +198,26 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Relay health report from pre-computed stats
+  let relayHealth: RelayHealthReport | null = null;
+  if (pubkeyStats?.relayHealthScore) {
+    try {
+      relayHealth = JSON.parse(pubkeyStats.relayHealthScore);
+    } catch {
+      // invalid JSON
+    }
+  }
+
+  // Timezone timeline from pre-computed stats
+  let timezoneTimeline: TimezoneWindow[] = [];
+  if (pubkeyStats?.timezoneTimeline) {
+    try {
+      timezoneTimeline = JSON.parse(pubkeyStats.timezoneTimeline);
+    } catch {
+      // invalid JSON
+    }
+  }
+
   const relayTimeline: RelayMonthCount[] = relayTimelineRows.map((r) => ({
     relay: r.relay,
     month: r.month,
@@ -220,6 +240,8 @@ export async function GET(request: NextRequest) {
     dmAnalytics,
     relayTimeline,
     nip65Relays,
+    relayHealth,
+    timezoneTimeline,
   };
 
   return NextResponse.json(data);
