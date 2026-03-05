@@ -119,3 +119,49 @@ export function estimateTimezone(
     flaggedUnreliable,
   };
 }
+
+export interface TimezoneWindowResult {
+  period: string;          // "2025-01"
+  estimatedOffset: number;
+  confidence: "low" | "medium" | "high";
+  eventCount: number;
+}
+
+/**
+ * Compute timezone estimates per month using the sleep-gap algorithm.
+ * Groups timestamps by month and runs estimation on each month.
+ */
+export function computeTimezoneTimeline(
+  timestamps: number[]
+): TimezoneWindowResult[] {
+  if (timestamps.length === 0) return [];
+
+  // Group timestamps by month
+  const monthMap = new Map<string, number[]>();
+  for (const ts of timestamps) {
+    const date = new Date(ts * 1000);
+    const month = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+    const arr = monthMap.get(month) ?? [];
+    arr.push(ts);
+    monthMap.set(month, arr);
+  }
+
+  // Sort months chronologically
+  const sortedMonths = [...monthMap.keys()].sort();
+
+  const results: TimezoneWindowResult[] = [];
+  for (const month of sortedMonths) {
+    const monthTimestamps = monthMap.get(month)!;
+    const estimate = estimateTimezone({ timestamps: monthTimestamps });
+    if (estimate) {
+      results.push({
+        period: month,
+        estimatedOffset: estimate.estimatedUtcOffset,
+        confidence: estimate.confidence,
+        eventCount: monthTimestamps.length,
+      });
+    }
+  }
+
+  return results;
+}
