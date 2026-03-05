@@ -107,6 +107,34 @@ export interface Nip65Relay {
   eventPercent: number; // percentage of user's events held by this relay (0-100)
 }
 
+// ── Relay Health Report types ───────────────────────────────────────
+
+export type RelayHealthSeverity = "error" | "warning" | "info";
+export type RelayHealthScore = "good" | "needs-attention" | "poor";
+
+export interface RelayHealthIssue {
+  id: string;
+  severity: RelayHealthSeverity;
+  title: string;
+  description: string;
+  relays?: string[];
+}
+
+export interface RelayHealthReport {
+  score: RelayHealthScore;
+  issues: RelayHealthIssue[];
+  recommendations: string[];
+}
+
+// ── Timezone Timeline types ─────────────────────────────────────────
+
+export interface TimezoneWindow {
+  period: string;              // "2025-01" (month)
+  estimatedOffset: number;     // UTC offset (e.g. 1, -5)
+  confidence: "low" | "medium" | "high";
+  eventCount: number;
+}
+
 // ── Analytics types ──────────────────────────────────────────────
 
 export interface HeatmapCell {
@@ -134,11 +162,13 @@ export interface AnalyticsData {
   dmAnalytics: DmAnalytics | null;
   relayTimeline: RelayMonthCount[];
   nip65Relays: Nip65Relay[];
+  relayHealth: RelayHealthReport | null;
+  timezoneTimeline: TimezoneWindow[];
 }
 
 // ── UI types ───────────────────────────────────────────────────────
 
-export type DetailTab = "events" | "cache" | "analytics";
+export type DetailTab = "events" | "cache" | "analytics" | "relay-health";
 
 export interface ToastMessage {
   text: string;
