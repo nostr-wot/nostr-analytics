@@ -27,6 +27,7 @@ export default function AnalyticsFilterBar({
   tzOffset,
   onTzChange,
   suggestedTz,
+  outboxRelays,
 }: {
   kindDistribution: KindCount[];
   selectedKinds: Set<number>;
@@ -37,6 +38,7 @@ export default function AnalyticsFilterBar({
   tzOffset: number;
   onTzChange: (offset: number) => void;
   suggestedTz: number;
+  outboxRelays?: string[];
 }) {
   const kindPills = kindDistribution.map((k) => ({
     key: String(k.kind),
@@ -53,6 +55,10 @@ export default function AnalyticsFilterBar({
     label: shortenRelay(r.relay),
     count: r.count,
   }));
+
+  const highlightedRelays = outboxRelays
+    ? new Set(outboxRelays)
+    : undefined;
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-zinc-800 bg-zinc-950/90 backdrop-blur-md">
@@ -78,6 +84,7 @@ export default function AnalyticsFilterBar({
             items={relayPills}
             selected={selectedRelays}
             onToggle={onToggleRelay}
+            highlighted={highlightedRelays}
           />
         </div>
 

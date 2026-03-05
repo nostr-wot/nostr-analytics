@@ -58,6 +58,7 @@ model Relay {
   consecutiveErrors Int            @default(0)
   lastErrorAt       DateTime?
   backoffUntil      DateTime?
+  throttleDelayMs   Int            @default(0)
   nostrEvents       NostrEvent[]
   eventSources      EventSource[]
   relayChecks       RelayCheck[]
@@ -92,14 +93,16 @@ model TimezoneEstimate {
 }
 
 model PubkeyStats {
-  id                Int      @id @default(autoincrement())
-  pubkeyHex         String   @unique
-  kindDistribution  String   // JSON: [{kind, count}]
-  relayDistribution String   // JSON: [{relay, count}]
-  totalEvents       Int
-  earliestEvent     Int
-  latestEvent       Int
-  computedAt        DateTime @default(now())
+  id                      Int      @id @default(autoincrement())
+  pubkeyHex               String   @unique
+  kindDistribution        String   // JSON: [{kind, count}]
+  relayDistribution       String   // JSON: [{relay, count}]
+  dmActivityDistribution  String?  // JSON: [{hour, count}] for kind 4/1059
+  nip65Relays             String?  // JSON: Nip65Relay[] (markers, health, eventPercent)
+  totalEvents             Int
+  earliestEvent           Int
+  latestEvent             Int
+  computedAt              DateTime @default(now())
 }
 
 model RelaySnapshot {
@@ -130,4 +133,16 @@ model CacheResponse {
   @@index([pubkeyHex])
   @@index([queryType])
   @@index([pubkeyHex, queryType])
+}
+
+model CacheResponseLog {
+  id           Int      @id @default(autoincrement())
+  pubkeyHex    String
+  queryType    String
+  responseKind Int
+  content      String   // the previous content before overwrite
+  capturedAt   DateTime @default(now())
+
+  @@index([pubkeyHex, queryType, responseKind])
+  @@index([capturedAt])
 }

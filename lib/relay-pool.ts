@@ -1,5 +1,6 @@
 import WebSocket from "ws";
 import { connectWebSocket } from "./websocket";
+import { RelayThrottler } from "./relay-throttler";
 
 export interface ConnectionResult {
   url: string;
@@ -8,10 +9,13 @@ export interface ConnectionResult {
   error?: string;
 }
 
+const RATE_LIMIT_RE = /429|rate.?limit|too many/i;
+
 export class RelayPool {
   private connections = new Map<string, WebSocket>();
   private pending = new Map<string, Promise<WebSocket>>();
   private _healthResults = new Map<string, ConnectionResult>();
+  readonly throttler = new RelayThrottler();
 
   /** Health results recorded during this pool's lifetime (one per URL). */
   get healthResults(): ConnectionResult[] {
@@ -59,13 +63,20 @@ export class RelayPool {
     } catch (err) {
       this.pending.delete(url);
 
+      const errMsg = err instanceof Error ? err.message : String(err);
+
+      // 429 at connection level → throttle, don't treat as hard error
+      if (RATE_LIMIT_RE.test(errMsg)) {
+        this.throttler.reportRateLimit(url);
+      }
+
       // Record health on first failed connect
       if (!this._healthResults.has(url)) {
         this._healthResults.set(url, {
           url,
           status: "error",
           latencyMs: null,
-          error: err instanceof Error ? err.message : String(err),
+          error: errMsg,
         });
       }
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import type { HeatmapCell, DailyBoundary, AnalyticsData } from "@/lib/types";
+import type { HeatmapCell, DailyBoundary, AnalyticsData, DmHourlyActivity, DmAnalytics, RelayMonthCount, Nip65Relay } from "@/lib/types";
 
 interface HeatmapRow {
   dow: string | number;
@@ -12,6 +12,12 @@ interface BoundaryRow {
   d: string;
   firstMinute: number | bigint;
   lastMinute: number | bigint;
+}
+
+interface RelayTimelineRow {
+  relay: string;
+  month: string;
+  cnt: number | bigint;
 }
 
 function buildTzModifier(offset: number): string {
@@ -67,8 +73,19 @@ export async function GET(request: NextRequest) {
   // Combined filter params (kind first, then relay — matches clause order)
   const filterParams = [...kindParams, ...relayParams];
 
+  // Build relay timeline filter clauses (operates on EventSource + NostrEvent join)
+  const tlKindClause =
+    kindFilter.length > 0
+      ? `AND ne.kind IN (${kindFilter.map(() => "?").join(", ")})`
+      : "";
+  const tlRelayClause =
+    relayFilter.length > 0
+      ? `AND es.relay IN (${relayFilter.map(() => "?").join(", ")})`
+      : "";
+  const tlFilterParams = [...kindParams, ...relayParams];
+
   // Pre-computed lookups + filter-dependent live queries in parallel
-  const [tzEstimate, pubkeyStats, heatmapRows, boundaryRows] =
+  const [tzEstimate, pubkeyStats, heatmapRows, boundaryRows, relayTimelineRows] =
     await Promise.all([
       prisma.timezoneEstimate.findUnique({ where: { pubkeyHex: pubkey } }),
       prisma.pubkeyStats.findUnique({ where: { pubkeyHex: pubkey } }),
@@ -89,9 +106,11 @@ export async function GET(request: NextRequest) {
       ),
 
       // Daily first/last event minute-of-day (with tz offset + filters)
+      // Day boundary shifted by -5 hours: "day" starts at 5 AM local time.
+      // Late-night events (midnight–5 AM) belong to the previous day.
       prisma.$queryRawUnsafe<BoundaryRow[]>(
         `SELECT
-          date(createdAt, 'unixepoch', ?) AS d,
+          date(createdAt, 'unixepoch', ?, '-5 hours') AS d,
           MIN(CAST(strftime('%H', datetime(createdAt, 'unixepoch', ?)) AS INTEGER) * 60
             + CAST(strftime('%M', datetime(createdAt, 'unixepoch', ?)) AS INTEGER)) AS firstMinute,
           MAX(CAST(strftime('%H', datetime(createdAt, 'unixepoch', ?)) AS INTEGER) * 60
@@ -107,6 +126,21 @@ export async function GET(request: NextRequest) {
         tzMod,
         pubkey,
         ...filterParams
+      ),
+
+      // Relay timeline: events per relay per month (by event authored time)
+      prisma.$queryRawUnsafe<RelayTimelineRow[]>(
+        `SELECT
+          es.relay,
+          strftime('%Y-%m', datetime(ne.createdAt, 'unixepoch')) AS month,
+          COUNT(*) AS cnt
+        FROM EventSource es
+        JOIN NostrEvent ne ON ne.eventId = es.eventId
+        WHERE ne.pubkeyHex = ? ${tlKindClause} ${tlRelayClause}
+        GROUP BY es.relay, month
+        ORDER BY month ASC, es.relay`,
+        pubkey,
+        ...tlFilterParams
       ),
     ]);
 
@@ -134,6 +168,42 @@ export async function GET(request: NextRequest) {
     lastHour: Number(r.lastMinute) / 60,
   }));
 
+  // DM analytics from pre-computed distribution
+  let dmAnalytics: DmAnalytics | null = null;
+  if (pubkeyStats?.dmActivityDistribution) {
+    try {
+      const hourlyDistribution: DmHourlyActivity[] = JSON.parse(
+        pubkeyStats.dmActivityDistribution
+      );
+      const totalDmCount = hourlyDistribution.reduce((s, b) => s + b.count, 0);
+      if (totalDmCount > 0) {
+        const sorted = [...hourlyDistribution].sort((a, b) => b.count - a.count);
+        const peakHours = sorted.slice(0, 3).map((h) => h.hour);
+        const totalEvents = pubkeyStats.totalEvents || 1;
+        const responsivenessScore = Math.round((totalDmCount / totalEvents) * 1000) / 1000;
+        dmAnalytics = { hourlyDistribution, peakHours, totalDmCount, responsivenessScore };
+      }
+    } catch {
+      // invalid JSON, leave null
+    }
+  }
+
+  // NIP-65 relay list from pre-computed stats
+  let nip65Relays: Nip65Relay[] = [];
+  if (pubkeyStats?.nip65Relays) {
+    try {
+      nip65Relays = JSON.parse(pubkeyStats.nip65Relays);
+    } catch {
+      // invalid JSON, leave empty
+    }
+  }
+
+  const relayTimeline: RelayMonthCount[] = relayTimelineRows.map((r) => ({
+    relay: r.relay,
+    month: r.month,
+    count: Number(r.cnt),
+  }));
+
   const data: AnalyticsData = {
     heatmap,
     kindDistribution,
@@ -147,6 +217,9 @@ export async function GET(request: NextRequest) {
     suggestedTimezoneOffset,
     timezoneConfidence,
     timezoneFlagged,
+    dmAnalytics,
+    relayTimeline,
+    nip65Relays,
   };
 
   return NextResponse.json(data);

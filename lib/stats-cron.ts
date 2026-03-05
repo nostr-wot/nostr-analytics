@@ -16,6 +16,21 @@ interface StatsRow {
   maxCreatedAt: number | null;
 }
 
+interface DmHourRow {
+  hour: number;
+  cnt: number | bigint;
+}
+
+interface Nip65RelayRow {
+  relay: string;
+  cnt: number | bigint;
+}
+
+interface RelayHealthRow {
+  relay: string;
+  status: string;
+}
+
 interface UptimeRow {
   relay: string;
   total: number | bigint;
@@ -27,6 +42,193 @@ interface CountRow {
   cnt: number | bigint;
 }
 
+export async function recomputeStatsForPubkey(pubkeyHex: string): Promise<void> {
+  const [eventCount, cacheCount, kind0] = await Promise.all([
+    prisma.nostrEvent.count({ where: { pubkeyHex } }),
+    prisma.cacheResponse.count({ where: { pubkeyHex } }),
+    prisma.nostrEvent.findFirst({
+      where: { pubkeyHex, kind: 0 },
+      orderBy: { createdAt: "desc" },
+      select: { content: true },
+    }),
+  ]);
+
+  let cachedProfile: string | null = null;
+  if (kind0) {
+    try {
+      JSON.parse(kind0.content); // validate JSON
+      cachedProfile = kind0.content;
+    } catch {
+      // invalid JSON
+    }
+  }
+
+  // Update TrackedNpub counter columns
+  await prisma.trackedNpub.update({
+    where: { pubkeyHex },
+    data: {
+      cachedEventCount: eventCount,
+      cachedCacheCount: cacheCount,
+      cachedProfile,
+      statsComputedAt: new Date(),
+    },
+  });
+
+  // Compute kind + relay distributions and date range for PubkeyStats
+  const [kindRows, relayRows, statsRows, dmHourRows] = await Promise.all([
+    prisma.nostrEvent.groupBy({
+      by: ["kind"],
+      where: { pubkeyHex },
+      _count: { kind: true },
+      orderBy: { _count: { kind: "desc" } },
+    }) as unknown as Promise<KindRow[]>,
+
+    prisma.$queryRawUnsafe<RelayRow[]>(
+      `SELECT es.relay, COUNT(DISTINCT es.eventId) AS cnt
+      FROM EventSource es
+      JOIN NostrEvent ne ON ne.eventId = es.eventId
+      WHERE ne.pubkeyHex = ?
+      GROUP BY es.relay
+      ORDER BY cnt DESC`,
+      pubkeyHex
+    ),
+
+    prisma.$queryRawUnsafe<StatsRow[]>(
+      `SELECT COUNT(*) AS cnt, MIN(createdAt) AS minCreatedAt, MAX(createdAt) AS maxCreatedAt
+      FROM NostrEvent WHERE pubkeyHex = ?`,
+      pubkeyHex
+    ),
+
+    prisma.$queryRawUnsafe<DmHourRow[]>(
+      `SELECT CAST(strftime('%H', datetime(createdAt, 'unixepoch')) AS INTEGER) AS hour,
+              COUNT(*) AS cnt
+       FROM NostrEvent
+       WHERE pubkeyHex = ? AND kind IN (4, 1059)
+       GROUP BY hour ORDER BY hour`,
+      pubkeyHex
+    ),
+  ]);
+
+  const kindDistribution = kindRows.map((k: KindRow) => ({
+    kind: k.kind,
+    count: Number(k._count.kind),
+  }));
+
+  const relayDistribution = relayRows.map((r: RelayRow) => ({
+    relay: r.relay,
+    count: Number(r.cnt),
+  }));
+
+  // Build full 24-bin DM activity distribution
+  const dmBins = Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0 }));
+  for (const row of dmHourRows) {
+    dmBins[Number(row.hour)].count = Number(row.cnt);
+  }
+  const dmTotal = dmBins.reduce((s, b) => s + b.count, 0);
+  const dmActivityDistribution = dmTotal > 0 ? JSON.stringify(dmBins) : null;
+
+  const stats = statsRows[0];
+  const totalEvents = Number(stats?.cnt ?? 0);
+
+  // Compute NIP-65 relay list with markers, health, and event percentages
+  let nip65Relays: string | null = null;
+  const nip65Row = await prisma.$queryRawUnsafe<{ tags: string }[]>(
+    `SELECT tags FROM NostrEvent
+     WHERE pubkeyHex = ? AND kind = 10002
+     ORDER BY createdAt DESC LIMIT 1`,
+    pubkeyHex
+  );
+
+  if (nip65Row.length > 0) {
+    try {
+      const tags: string[][] = JSON.parse(nip65Row[0].tags);
+      const relayTags = tags.filter((t) => t[0] === "r" && t[1]);
+      if (relayTags.length > 0) {
+        const relayUrls = relayTags.map((t) => t[1]);
+        const placeholders = relayUrls.map(() => "?").join(", ");
+
+        // Batch query: events per NIP-65 relay for this pubkey
+        const [eventCountRows, healthRows] = await Promise.all([
+          prisma.$queryRawUnsafe<Nip65RelayRow[]>(
+            `SELECT es.relay, COUNT(DISTINCT es.eventId) AS cnt
+             FROM EventSource es
+             JOIN NostrEvent ne ON ne.eventId = es.eventId
+             WHERE ne.pubkeyHex = ? AND es.relay IN (${placeholders})
+             GROUP BY es.relay`,
+            pubkeyHex,
+            ...relayUrls
+          ),
+          prisma.$queryRawUnsafe<RelayHealthRow[]>(
+            `SELECT relay, status
+             FROM RelayCheck
+             WHERE relay IN (${placeholders})
+               AND checkedAt >= datetime('now', '-24 hours')
+             ORDER BY checkedAt DESC`,
+            ...relayUrls
+          ),
+        ]);
+
+        const eventCountMap = new Map(
+          eventCountRows.map((r) => [r.relay, Number(r.cnt)])
+        );
+        // Pick latest check per relay (first seen in DESC order)
+        const healthMap = new Map<string, string>();
+        for (const r of healthRows) {
+          if (!healthMap.has(r.relay)) healthMap.set(r.relay, r.status);
+        }
+
+        const nip65List = relayTags.map((t) => {
+          const url = t[1];
+          const marker = t[2] === "read" ? "read" : t[2] === "write" ? "write" : "both";
+          const relayEvents = eventCountMap.get(url) ?? 0;
+          let health: string;
+          if (relayEvents > 0) {
+            health = "active";
+          } else if (healthMap.has(url)) {
+            health = healthMap.get(url) === "ok" ? "reachable" : "unreachable";
+          } else {
+            health = "unknown";
+          }
+          const eventPercent = totalEvents > 0
+            ? Math.round((relayEvents / totalEvents) * 1000) / 10
+            : 0;
+          return { url, marker, health, eventPercent };
+        });
+
+        nip65Relays = JSON.stringify(nip65List);
+      }
+    } catch {
+      // invalid JSON, leave null
+    }
+  }
+
+  await prisma.pubkeyStats.upsert({
+    where: { pubkeyHex },
+    create: {
+      pubkeyHex,
+      kindDistribution: JSON.stringify(kindDistribution),
+      relayDistribution: JSON.stringify(relayDistribution),
+      dmActivityDistribution,
+      nip65Relays,
+      totalEvents,
+      earliestEvent: stats?.minCreatedAt ?? 0,
+      latestEvent: stats?.maxCreatedAt ?? 0,
+    },
+    update: {
+      kindDistribution: JSON.stringify(kindDistribution),
+      relayDistribution: JSON.stringify(relayDistribution),
+      dmActivityDistribution,
+      nip65Relays,
+      totalEvents,
+      earliestEvent: stats?.minCreatedAt ?? 0,
+      latestEvent: stats?.maxCreatedAt ?? 0,
+      computedAt: new Date(),
+    },
+  });
+
+  console.log(`[stats] Recomputed stats for ${pubkeyHex.slice(0, 8)}`);
+}
+
 export async function runStatsComputation(): Promise<void> {
   const trackedUsers = await prisma.trackedNpub.findMany({
     select: { pubkeyHex: true },
@@ -34,94 +236,7 @@ export async function runStatsComputation(): Promise<void> {
 
   // -- Per-npub stats --
   for (const { pubkeyHex } of trackedUsers) {
-    const [eventCount, cacheCount, kind0] = await Promise.all([
-      prisma.nostrEvent.count({ where: { pubkeyHex } }),
-      prisma.cacheResponse.count({ where: { pubkeyHex } }),
-      prisma.nostrEvent.findFirst({
-        where: { pubkeyHex, kind: 0 },
-        orderBy: { createdAt: "desc" },
-        select: { content: true },
-      }),
-    ]);
-
-    let cachedProfile: string | null = null;
-    if (kind0) {
-      try {
-        JSON.parse(kind0.content); // validate JSON
-        cachedProfile = kind0.content;
-      } catch {
-        // invalid JSON
-      }
-    }
-
-    // Update TrackedNpub counter columns
-    await prisma.trackedNpub.update({
-      where: { pubkeyHex },
-      data: {
-        cachedEventCount: eventCount,
-        cachedCacheCount: cacheCount,
-        cachedProfile,
-        statsComputedAt: new Date(),
-      },
-    });
-
-    // Compute kind + relay distributions and date range for PubkeyStats
-    const [kindRows, relayRows, statsRows] = await Promise.all([
-      prisma.nostrEvent.groupBy({
-        by: ["kind"],
-        where: { pubkeyHex },
-        _count: { kind: true },
-        orderBy: { _count: { kind: "desc" } },
-      }) as unknown as Promise<KindRow[]>,
-
-      prisma.$queryRawUnsafe<RelayRow[]>(
-        `SELECT es.relay, COUNT(DISTINCT es.eventId) AS cnt
-        FROM EventSource es
-        JOIN NostrEvent ne ON ne.eventId = es.eventId
-        WHERE ne.pubkeyHex = ?
-        GROUP BY es.relay
-        ORDER BY cnt DESC`,
-        pubkeyHex
-      ),
-
-      prisma.$queryRawUnsafe<StatsRow[]>(
-        `SELECT COUNT(*) AS cnt, MIN(createdAt) AS minCreatedAt, MAX(createdAt) AS maxCreatedAt
-        FROM NostrEvent WHERE pubkeyHex = ?`,
-        pubkeyHex
-      ),
-    ]);
-
-    const kindDistribution = kindRows.map((k: KindRow) => ({
-      kind: k.kind,
-      count: Number(k._count.kind),
-    }));
-
-    const relayDistribution = relayRows.map((r: RelayRow) => ({
-      relay: r.relay,
-      count: Number(r.cnt),
-    }));
-
-    const stats = statsRows[0];
-
-    await prisma.pubkeyStats.upsert({
-      where: { pubkeyHex },
-      create: {
-        pubkeyHex,
-        kindDistribution: JSON.stringify(kindDistribution),
-        relayDistribution: JSON.stringify(relayDistribution),
-        totalEvents: Number(stats?.cnt ?? 0),
-        earliestEvent: stats?.minCreatedAt ?? 0,
-        latestEvent: stats?.maxCreatedAt ?? 0,
-      },
-      update: {
-        kindDistribution: JSON.stringify(kindDistribution),
-        relayDistribution: JSON.stringify(relayDistribution),
-        totalEvents: Number(stats?.cnt ?? 0),
-        earliestEvent: stats?.minCreatedAt ?? 0,
-        latestEvent: stats?.maxCreatedAt ?? 0,
-        computedAt: new Date(),
-      },
-    });
+    await recomputeStatsForPubkey(pubkeyHex);
   }
 
   // -- Relay snapshots --

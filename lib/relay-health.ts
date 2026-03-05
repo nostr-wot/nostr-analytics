@@ -27,6 +27,21 @@ export async function saveRelayHealth(
     errorCategory: r.status === "error" ? classifyError(r.error) : null,
   }));
 
+  // Ensure all relay URLs exist in Relay table (outbox relays may be new)
+  const knownUrls = new Set(
+    (await prisma.relay.findMany({ select: { url: true } })).map((r) => r.url)
+  );
+  for (const r of classified) {
+    if (!knownUrls.has(r.url)) {
+      await prisma.relay.upsert({
+        where: { url: r.url },
+        update: {},
+        create: { url: r.url },
+      });
+      knownUrls.add(r.url);
+    }
+  }
+
   // Insert checks with error classification
   await prisma.relayCheck.createMany({
     data: classified.map((r) => ({
@@ -46,6 +61,14 @@ export async function saveRelayHealth(
         where: { url: r.url },
         update: { consecutiveErrors: 0, backoffUntil: null },
         create: { url: r.url, consecutiveErrors: 0 },
+      });
+    } else if (r.errorCategory === "rate_limit") {
+      // Rate limit — record the check but don't increment backoff.
+      // The throttler handles spacing out requests instead.
+      await prisma.relay.upsert({
+        where: { url: r.url },
+        update: { lastErrorAt: new Date() },
+        create: { url: r.url, lastErrorAt: new Date() },
       });
     } else {
       // Error — atomic increment and compute backoff

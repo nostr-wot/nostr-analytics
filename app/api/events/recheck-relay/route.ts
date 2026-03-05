@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
 import { fetchFromSingleRelayExhaustive } from "@/lib/collector";
+import { recomputeStatsForPubkey } from "@/lib/stats-cron";
 
 export async function POST(request: NextRequest) {
   const auth = requireAuth(request);
@@ -41,5 +42,6 @@ export async function POST(request: NextRequest) {
   }
 
   const result = await fetchFromSingleRelayExhaustive(relayUrl, pubkeyHex);
+  await recomputeStatsForPubkey(pubkeyHex);
   return NextResponse.json(result);
 }

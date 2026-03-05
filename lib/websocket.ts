@@ -38,6 +38,8 @@ export function sendRelayRequest(
   ws.send(JSON.stringify(["REQ", subId, filter]));
 }
 
+const RATE_LIMIT_RE = /rate.?limit|too many|429/i;
+
 export function waitForEose(
   ws: WebSocket,
   subId: string,
@@ -46,12 +48,13 @@ export function waitForEose(
   return new Promise((resolve) => {
     const events: NostrEventWire[] = [];
     const cacheResponses: { kind: number; content: unknown }[] = [];
+    let rateLimited = false;
 
     const cleanup = () => ws.removeListener("message", onMessage);
 
     const timeout = setTimeout(() => {
       cleanup();
-      resolve({ events, cacheResponses });
+      resolve({ events, cacheResponses, rateLimited });
     }, timeoutMs);
 
     const onMessage = (data: WebSocket.Data) => {
@@ -71,7 +74,14 @@ export function waitForEose(
         if (type === "EOSE") {
           clearTimeout(timeout);
           cleanup();
-          resolve({ events, cacheResponses });
+          resolve({ events, cacheResponses, rateLimited });
+        }
+        // CLOSED with rate-limit reason — relay killed this subscription
+        if (type === "CLOSED" && typeof content === "string" && RATE_LIMIT_RE.test(content)) {
+          rateLimited = true;
+          clearTimeout(timeout);
+          cleanup();
+          resolve({ events, cacheResponses, rateLimited });
         }
       } catch {
         // skip unparseable messages

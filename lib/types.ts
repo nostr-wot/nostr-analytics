@@ -19,6 +19,7 @@ export type MessageHandler = {
 export interface EoseResult {
   events: NostrEventWire[];
   cacheResponses: { kind: number; content: unknown }[];
+  rateLimited?: boolean;
 }
 
 // ── API response types ─────────────────────────────────────────────
@@ -75,6 +76,37 @@ export interface RelayCount {
   count: number;
 }
 
+// ── DM Analytics types ──────────────────────────────────────────
+
+export interface DmHourlyActivity {
+  hour: number;
+  count: number;
+}
+
+export interface DmAnalytics {
+  hourlyDistribution: DmHourlyActivity[]; // 24 bins (UTC)
+  peakHours: number[];                     // top 3 hours
+  totalDmCount: number;
+  responsivenessScore: number;             // dmCount / totalEvents
+}
+
+// ── Relay Timeline types ────────────────────────────────────────
+
+export interface RelayMonthCount {
+  relay: string;
+  month: string; // "2024-01"
+  count: number;
+}
+
+// ── NIP-65 Relay types ──────────────────────────────────────────
+
+export interface Nip65Relay {
+  url: string;
+  marker: "read" | "write" | "both";
+  health: "active" | "reachable" | "unreachable" | "unknown";
+  eventPercent: number; // percentage of user's events held by this relay (0-100)
+}
+
 // ── Analytics types ──────────────────────────────────────────────
 
 export interface HeatmapCell {
@@ -99,6 +131,9 @@ export interface AnalyticsData {
   suggestedTimezoneOffset: number;
   timezoneConfidence: "low" | "medium" | "high" | null;
   timezoneFlagged: boolean;
+  dmAnalytics: DmAnalytics | null;
+  relayTimeline: RelayMonthCount[];
+  nip65Relays: Nip65Relay[];
 }
 
 // ── UI types ───────────────────────────────────────────────────────

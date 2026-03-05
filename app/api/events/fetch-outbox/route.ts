@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireAuth } from "@/lib/auth";
-import { reloadKind0 } from "@/lib/collector";
+import { deepFetchOutboxRelays } from "@/lib/collector";
 import { recomputeStatsForPubkey } from "@/lib/stats-cron";
 
 export async function POST(request: NextRequest) {
@@ -28,7 +28,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const result = await reloadKind0(pubkeyHex);
-  await recomputeStatsForPubkey(pubkeyHex);
+  const result = await deepFetchOutboxRelays(pubkeyHex);
+  if (result.relayCount > 0) {
+    await recomputeStatsForPubkey(pubkeyHex);
+  }
   return NextResponse.json(result);
 }

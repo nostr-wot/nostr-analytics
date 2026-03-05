@@ -4,10 +4,12 @@ export default function MultiSelectPills({
   items,
   selected,
   onToggle,
+  highlighted,
 }: {
   items: { key: string; label: string; count?: number }[];
   selected: Set<string>;
   onToggle: (key: string) => void;
+  highlighted?: Set<string>;
 }) {
   const allSelected = selected.size === 0;
 
@@ -30,6 +32,7 @@ export default function MultiSelectPills({
       </button>
       {items.map((item) => {
         const isSelected = selected.has(item.key);
+        const isHighlighted = highlighted?.has(item.key);
         return (
           <button
             key={item.key}
@@ -38,8 +41,11 @@ export default function MultiSelectPills({
               isSelected
                 ? "bg-blue-600 text-white"
                 : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
-            }`}
+            } ${isHighlighted ? "ring-1 ring-emerald-500/60" : ""}`}
           >
+            {isHighlighted && (
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1 align-middle" />
+            )}
             {item.label}
             {item.count !== undefined && (
               <span className="ml-1 opacity-60">({item.count})</span>

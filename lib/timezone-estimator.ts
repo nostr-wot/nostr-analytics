@@ -1,5 +1,3 @@
-const PEAK_PRIOR = 15.0;
-
 interface EstimationInput {
   timestamps: number[]; // Unix timestamps (createdAt from NostrEvent)
 }
@@ -7,27 +5,26 @@ interface EstimationInput {
 export interface EstimationResult {
   estimatedUtcOffset: number;
   confidence: "low" | "medium" | "high";
-  activityPeakUtc: number;
+  activityPeakUtc: number;   // reused: sleep gap midpoint in UTC
   eventCount: number;
   daySpread: number;
-  stddevHours: number;
+  stddevHours: number;        // reused: gap quality ratio (gapLowSum / peakCount)
   flaggedUnreliable: boolean;
-}
-
-function mean(values: number[]): number {
-  return values.reduce((sum, v) => sum + v, 0) / values.length;
-}
-
-function stddev(values: number[], mu: number): number {
-  const variance =
-    values.reduce((sum, v) => sum + (v - mu) ** 2, 0) / values.length;
-  return Math.sqrt(variance);
 }
 
 function snapToHalf(value: number): number {
   return Math.round(value * 2) / 2;
 }
 
+/**
+ * Sleep gap detection algorithm for timezone estimation.
+ *
+ * 1. Build 24-bin histogram of event counts per UTC hour
+ * 2. Find longest contiguous run of hours below 15% of peak (wrap-around)
+ * 3. Gap midpoint = estimated sleep center in UTC
+ * 4. Offset = 3.5 (assumed local sleep center) - gap midpoint
+ * 5. Normalize to [-12, 14], snap to 0.5h increments
+ */
 export function estimateTimezone(
   input: EstimationInput
 ): EstimationResult | null {
@@ -35,41 +32,78 @@ export function estimateTimezone(
 
   if (timestamps.length === 0) return null;
 
-  // Extract raw UTC hours and distinct days
+  // Extract distinct days and build 24-bin histogram
   const days = new Set<string>();
-  const hours: number[] = [];
+  const bins = new Array(24).fill(0);
 
   for (const ts of timestamps) {
     const date = new Date(ts * 1000);
-    const h = date.getUTCHours() + date.getUTCMinutes() / 60;
-    hours.push(h);
+    const hour = date.getUTCHours();
+    bins[hour]++;
     days.add(date.toISOString().slice(0, 10));
   }
 
-  const N = hours.length;
+  const N = timestamps.length;
   const D = days.size;
 
   // Minimum data check
   if (N < 5 || D < 2) return null;
 
-  // Compute statistics on raw UTC hours
-  const muActivity = mean(hours);
-  const sigma = stddev(hours, muActivity);
+  const peakCount = Math.max(...bins);
+  const threshold = peakCount * 0.15;
 
-  // Estimate offset: place mean activity at 3 PM local
-  const rawOffset = PEAK_PRIOR - muActivity;
-  // Clamp to valid range and snap to 0.5h
+  // Find longest contiguous gap below threshold using doubled array (wrap-around)
+  let bestStart = 0;
+  let bestLength = 0;
+  let currentStart = 0;
+  let currentLength = 0;
+
+  for (let i = 0; i < 48; i++) {
+    const hour = i % 24;
+    if (bins[hour] <= threshold) {
+      if (currentLength === 0) currentStart = i;
+      currentLength++;
+      if (currentLength > bestLength) {
+        bestLength = currentLength;
+        bestStart = currentStart;
+      }
+    } else {
+      currentLength = 0;
+    }
+  }
+
+  // Cap gap length at 24 (can't be longer than a full day)
+  if (bestLength > 24) bestLength = 24;
+
+  // Gap midpoint = sleep center in UTC
+  const gapMidpoint = ((bestStart + bestLength / 2) % 24);
+
+  // Offset: assumed local sleep center is 3:30 AM
+  const LOCAL_SLEEP_CENTER = 3.5;
+  let rawOffset = LOCAL_SLEEP_CENTER - gapMidpoint;
+
+  // Normalize to [-12, 14]
+  if (rawOffset < -12) rawOffset += 24;
+  if (rawOffset > 14) rawOffset -= 24;
+
   const estimatedUtcOffset = snapToHalf(
     Math.max(-12, Math.min(14, rawOffset))
   );
 
-  // Confidence & reliability
-  const flaggedUnreliable = sigma > 4.0;
+  // Gap quality ratio: sum of counts in gap hours / peak count
+  let gapLowSum = 0;
+  for (let i = 0; i < bestLength; i++) {
+    gapLowSum += bins[(bestStart + i) % 24];
+  }
+  const gapRatio = peakCount > 0 ? gapLowSum / peakCount : 1;
+
+  // Confidence
+  const flaggedUnreliable = bestLength < 4;
 
   let confidence: "low" | "medium" | "high";
-  if (N >= 30 && D >= 7 && sigma <= 3) {
+  if (N >= 30 && D >= 7 && gapRatio < 0.1 && bestLength >= 5) {
     confidence = "high";
-  } else if (N >= 10 && D >= 3 && sigma <= 4) {
+  } else if (N >= 10 && D >= 3 && bestLength >= 4) {
     confidence = "medium";
   } else {
     confidence = "low";
@@ -78,10 +112,10 @@ export function estimateTimezone(
   return {
     estimatedUtcOffset,
     confidence,
-    activityPeakUtc: muActivity,
+    activityPeakUtc: gapMidpoint,   // sleep gap center in UTC
     eventCount: N,
     daySpread: D,
-    stddevHours: sigma,
+    stddevHours: gapRatio,           // gap quality ratio
     flaggedUnreliable,
   };
 }

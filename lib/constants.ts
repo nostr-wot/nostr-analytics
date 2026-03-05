@@ -142,6 +142,14 @@ export const FETCH_CONCURRENCY = parseInt(
   10
 );
 
+// ── Per-relay throttling ──────────────────────────────────────────
+
+export const THROTTLE_INITIAL_DELAY_MS = 500;
+export const THROTTLE_MAX_DELAY_MS = 5_000;
+export const THROTTLE_INCREASE_FACTOR = 2;
+export const THROTTLE_DECAY_FACTOR = 0.9;
+export const THROTTLE_FLOOR_MS = 50;
+
 // ── Scheduler / UI defaults ────────────────────────────────────────
 
 export const DEFAULT_FETCH_INTERVAL_MINUTES = 10;

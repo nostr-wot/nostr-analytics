@@ -5,10 +5,13 @@ import { getKindLabel } from "@/lib/kind-labels";
 import type { AnalyticsData } from "@/lib/types";
 import ActivityHeatmap from "./charts/ActivityHeatmap";
 import KindDistributionChart from "./charts/KindDistributionChart";
+import RelayDistributionChart from "./charts/RelayDistributionChart";
 import DailyBoundaryChart from "./charts/DailyBoundaryChart";
+import DmActivityChart from "./charts/DmActivityChart";
+import RelayTimelineChart from "./charts/RelayTimelineChart";
 import AnalyticsFilterBar from "./AnalyticsFilterBar";
 
-export default function AnalyticsTab({ pubkeyHex }: { pubkeyHex: string }) {
+export default function AnalyticsTab({ pubkeyHex, npub }: { pubkeyHex: string; npub?: string }) {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedKinds, setSelectedKinds] = useState<Set<number>>(new Set());
@@ -124,6 +127,21 @@ export default function AnalyticsTab({ pubkeyHex }: { pubkeyHex: string }) {
   return (
     <div className="pb-36">
       <div className="space-y-6">
+        {/* External analytics link */}
+        {npub && (
+          <a
+            href={`https://analytics.nostr-wot.com/npub/${npub}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            View on Nostr WoT Analytics
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+            </svg>
+          </a>
+        )}
+
         {/* Summary stats */}
         <div className="grid grid-cols-3 gap-4">
           <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
@@ -150,25 +168,76 @@ export default function AnalyticsTab({ pubkeyHex }: { pubkeyHex: string }) {
           </div>
         </div>
 
+        {/* NIP-65 Relay List */}
+        {data.nip65Relays.length > 0 && (
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <h3 className="text-sm font-medium text-zinc-300 mb-2">
+              NIP-65 Relay List
+            </h3>
+            <p className="text-xs text-zinc-500 mb-3">
+              Declared relay list from kind 10002
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {data.nip65Relays.map((relay) => {
+                let host: string;
+                try { host = new URL(relay.url).hostname; } catch { host = relay.url; }
+                const healthColor = {
+                  active: "bg-emerald-400",
+                  reachable: "bg-amber-400",
+                  unreachable: "bg-red-400",
+                  unknown: "bg-zinc-500",
+                }[relay.health];
+                const healthTitle = {
+                  active: "Active — has events",
+                  reachable: "Reachable — no events for this user",
+                  unreachable: "Unreachable — connection failed",
+                  unknown: "Unknown — no data",
+                }[relay.health];
+                const markerLabel = relay.marker === "read" ? "R" : relay.marker === "write" ? "W" : "R/W";
+                const markerColor = relay.marker === "read"
+                  ? "text-blue-400"
+                  : relay.marker === "write"
+                    ? "text-orange-400"
+                    : "text-zinc-400";
+                return (
+                  <span
+                    key={relay.url}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-zinc-800 text-zinc-300 border border-zinc-700"
+                    title={`${relay.url}\n${healthTitle}\n${relay.eventPercent}% of events`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${healthColor}`} />
+                    <span className={`${markerColor} font-semibold text-[10px]`}>{markerLabel}</span>
+                    {host}
+                    {relay.eventPercent > 0 && (
+                      <span className="text-zinc-500 text-[10px]">{relay.eventPercent}%</span>
+                    )}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Loading overlay for filter changes */}
         {loading && (
           <p className="text-xs text-zinc-500 animate-pulse">Updating...</p>
         )}
 
-        {/* Charts row: heatmap + donut */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-            <h3 className="text-sm font-medium text-zinc-300 mb-3">
-              Activity Heatmap
-            </h3>
-            <ActivityHeatmap data={data.heatmap} tzOffset={tzOffset} />
-          </div>
+        {/* Heatmap full width */}
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+          <h3 className="text-sm font-medium text-zinc-300 mb-3">
+            Activity Heatmap
+          </h3>
+          <ActivityHeatmap data={data.heatmap} tzOffset={tzOffset} />
+        </div>
+
+        {/* Distribution charts: kinds + relays */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <h3 className="text-sm font-medium text-zinc-300 mb-3">
               Event Type Distribution
             </h3>
             <KindDistributionChart data={data.kindDistribution} />
-            {/* Legend */}
             <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 justify-center">
               {data.kindDistribution.slice(0, 6).map((k) => (
                 <span key={k.kind} className="text-[10px] text-zinc-400">
@@ -177,7 +246,37 @@ export default function AnalyticsTab({ pubkeyHex }: { pubkeyHex: string }) {
               ))}
             </div>
           </div>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <h3 className="text-sm font-medium text-zinc-300 mb-3">
+              Relay Distribution
+            </h3>
+            <RelayDistributionChart data={data.relayDistribution} />
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 justify-center">
+              {data.relayDistribution.slice(0, 6).map((r) => {
+                let host: string;
+                try { host = new URL(r.relay).hostname.replace(/^relay\./, ""); } catch { host = r.relay; }
+                return (
+                  <span key={r.relay} className="text-[10px] text-zinc-400">
+                    {host}: {r.count}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
         </div>
+
+        {/* Relay timeline: events per relay over time */}
+        {data.relayTimeline.length > 0 && (
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <h3 className="text-sm font-medium text-zinc-300 mb-3">
+              Events per Relay Over Time
+            </h3>
+            <p className="text-xs text-zinc-500 mb-3">
+              Monthly event counts by relay — gaps reveal pruning
+            </p>
+            <RelayTimelineChart data={data.relayTimeline} outboxRelays={data.nip65Relays.filter((r) => r.marker !== "read").map((r) => r.url)} />
+          </div>
+        )}
 
         {/* Daily boundary chart full width */}
         <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
@@ -189,6 +288,43 @@ export default function AnalyticsTab({ pubkeyHex }: { pubkeyHex: string }) {
           </p>
           <DailyBoundaryChart data={data.dailyBoundaries} tzOffset={tzOffset} />
         </div>
+
+        {/* When to Contact — DM activity */}
+        {data.dmAnalytics && data.dmAnalytics.totalDmCount > 0 && (
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <h3 className="text-sm font-medium text-zinc-300 mb-3">
+              When to Contact
+            </h3>
+            <div className="flex flex-wrap items-center gap-3 mb-4">
+              <div className="flex flex-wrap gap-2">
+                {data.dmAnalytics.peakHours.map((h) => {
+                  let localH = (h + tzOffset) % 24;
+                  if (localH < 0) localH += 24;
+                  const period = localH >= 12 ? "PM" : "AM";
+                  const display = localH === 0 ? 12 : localH > 12 ? localH - 12 : localH;
+                  return (
+                    <span
+                      key={h}
+                      className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                    >
+                      {display}:00 {period}
+                    </span>
+                  );
+                })}
+                <span className="text-xs text-zinc-500">Best hours</span>
+              </div>
+              <div className="flex items-center gap-4 ml-auto text-xs text-zinc-400">
+                <span>{data.dmAnalytics.totalDmCount.toLocaleString()} DMs</span>
+                <span>{(data.dmAnalytics.responsivenessScore * 100).toFixed(1)}% of activity</span>
+              </div>
+            </div>
+            <DmActivityChart
+              data={data.dmAnalytics.hourlyDistribution}
+              peakHours={data.dmAnalytics.peakHours}
+              tzOffset={tzOffset}
+            />
+          </div>
+        )}
       </div>
 
       <AnalyticsFilterBar
@@ -201,6 +337,7 @@ export default function AnalyticsTab({ pubkeyHex }: { pubkeyHex: string }) {
         tzOffset={tzOffset}
         onTzChange={setTzOffset}
         suggestedTz={suggestedTz}
+        outboxRelays={data.nip65Relays.filter((r) => r.marker !== "read").map((r) => r.url)}
       />
     </div>
   );

@@ -76,6 +76,26 @@ async function storeCacheResponse(
   kind: number,
   content: unknown
 ): Promise<void> {
+  const newContent = JSON.stringify(content);
+
+  const existing = await prisma.cacheResponse.findUnique({
+    where: {
+      pubkeyHex_queryType_responseKind: { pubkeyHex, queryType, responseKind: kind },
+    },
+    select: { content: true },
+  });
+
+  if (existing && existing.content !== newContent) {
+    await prisma.cacheResponseLog.create({
+      data: {
+        pubkeyHex,
+        queryType,
+        responseKind: kind,
+        content: existing.content,
+      },
+    });
+  }
+
   await prisma.cacheResponse.upsert({
     where: {
       pubkeyHex_queryType_responseKind: {
@@ -85,13 +105,13 @@ async function storeCacheResponse(
       },
     },
     update: {
-      content: JSON.stringify(content),
+      content: newContent,
     },
     create: {
       pubkeyHex,
       queryType,
       responseKind: kind,
-      content: JSON.stringify(content),
+      content: newContent,
     },
   });
 }
@@ -150,6 +170,28 @@ async function fetchFromCache(
   }
 
   return { newEvents, newCacheResponses };
+}
+
+// ── NIP-65 outbox relay discovery ─────────────────────────────────────
+
+async function getOutboxRelays(pubkeyHex: string): Promise<string[]> {
+  const row = await prisma.$queryRawUnsafe<{ tags: string }[]>(
+    `SELECT tags FROM NostrEvent
+     WHERE pubkeyHex = ? AND kind = 10002
+     ORDER BY createdAt DESC LIMIT 1`,
+    pubkeyHex
+  );
+  if (row.length === 0) return [];
+  try {
+    const tags: string[][] = JSON.parse(row[0].tags);
+    return tags
+      .filter(
+        (t) => t[0] === "r" && t[1] && (t.length === 2 || t[2] === "write")
+      )
+      .map((t) => t[1]);
+  } catch {
+    return [];
+  }
 }
 
 // ── Relay fetch (with optional connection pool) ─────────────────────
@@ -265,6 +307,31 @@ async function fetchFromRelays(
   return { newEvents };
 }
 
+// ── Outbox relay fetch (NIP-65 write relays) ─────────────────────────
+
+async function fetchFromOutboxRelays(
+  pubkeyHex: string,
+  pool?: RelayPool
+): Promise<{ newEvents: number }> {
+  const outboxUrls = await getOutboxRelays(pubkeyHex);
+  if (outboxUrls.length === 0) return { newEvents: 0 };
+
+  // Exclude relays already in RELAY_URLS (they're fetched by fetchFromRelays)
+  const hardcodedSet = new Set(RELAY_URLS);
+  const extraUrls = outboxUrls.filter((url) => !hardcodedSet.has(url));
+  if (extraUrls.length === 0) return { newEvents: 0 };
+
+  console.log(
+    `[collector] ${pubkeyHex.slice(0, 8)}: fetching from ${extraUrls.length} extra outbox relay(s)`
+  );
+
+  const results = await Promise.all(
+    extraUrls.map((url) => fetchFromSingleRelay(url, pubkeyHex, pool))
+  );
+  const newEvents = results.reduce((sum, r) => sum + r.newEvents, 0);
+  return { newEvents };
+}
+
 // ── Public API ──────────────────────────────────────────────────────
 
 export async function fetchAllForPubkey(
@@ -276,12 +343,13 @@ export async function fetchAllForPubkey(
 }> {
   console.log(`[collector] Fetching data for ${pubkeyHex.slice(0, 8)}...`);
 
-  const [cacheResult, relayResult] = await Promise.all([
+  const [cacheResult, relayResult, outboxResult] = await Promise.all([
     fetchFromCache(pubkeyHex, pool),
     fetchFromRelays(pubkeyHex, pool),
+    fetchFromOutboxRelays(pubkeyHex, pool),
   ]);
 
-  const totalNewEvents = cacheResult.newEvents + relayResult.newEvents;
+  const totalNewEvents = cacheResult.newEvents + relayResult.newEvents + outboxResult.newEvents;
   const totalCacheResponses = cacheResult.newCacheResponses;
 
   console.log(
@@ -566,6 +634,44 @@ export async function deepFetchAllRelays(
   );
 
   return { totalEvents, newEvents: totalNewEvents };
+}
+
+// ── Deep fetch outbox relays (NIP-65) ────────────────────────────────
+
+export async function deepFetchOutboxRelays(
+  pubkeyHex: string
+): Promise<{ totalEvents: number; newEvents: number; relayCount: number }> {
+  const outboxUrls = await getOutboxRelays(pubkeyHex);
+  if (outboxUrls.length === 0) {
+    console.log(`[collector] No NIP-65 outbox relays found for ${pubkeyHex.slice(0, 8)}`);
+    return { totalEvents: 0, newEvents: 0, relayCount: 0 };
+  }
+
+  console.log(
+    `[collector] Deep fetch outbox relays for ${pubkeyHex.slice(0, 8)}: ${outboxUrls.length} relay(s)`
+  );
+
+  let totalEvents = 0;
+  let totalNewEvents = 0;
+
+  // Run sequentially to avoid overwhelming relays
+  for (const relayUrl of outboxUrls) {
+    try {
+      const result = await fetchFromSingleRelayExhaustive(relayUrl, pubkeyHex);
+      totalEvents += result.totalEvents;
+      totalNewEvents += result.newEvents;
+    } catch (err) {
+      let host: string;
+      try { host = new URL(relayUrl).hostname; } catch { host = relayUrl; }
+      console.error(`[collector] Outbox fetch error for ${host}:`, err);
+    }
+  }
+
+  console.log(
+    `[collector] Outbox fetch complete for ${pubkeyHex.slice(0, 8)}: ${totalEvents} total events, ${totalNewEvents} new from ${outboxUrls.length} relays`
+  );
+
+  return { totalEvents, newEvents: totalNewEvents, relayCount: outboxUrls.length };
 }
 
 // ── Concurrent execution helper ─────────────────────────────────────

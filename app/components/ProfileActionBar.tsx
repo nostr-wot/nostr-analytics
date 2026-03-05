@@ -14,6 +14,7 @@ export default function ProfileActionBar({ pubkeyHex, onProfileReloaded }: Props
   const [reloadingProfile, setReloadingProfile] = useState(false);
   const [recheckingRelay, setRecheckingRelay] = useState(false);
   const [deepFetching, setDeepFetching] = useState(false);
+  const [fetchingOutbox, setFetchingOutbox] = useState(false);
   const [selectedRelay, setSelectedRelay] = useState(RELAY_URLS[0]);
   const [customRelay, setCustomRelay] = useState("");
   const [isCustom, setIsCustom] = useState(false);
@@ -109,7 +110,36 @@ export default function ProfileActionBar({ pubkeyHex, onProfileReloaded }: Props
     }
   };
 
-  const anyLoading = reloadingProfile || recheckingRelay || deepFetching;
+  const handleFetchOutbox = async () => {
+    setFetchingOutbox(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/events/fetch-outbox", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pubkeyHex }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setMessage({ text: data.error || "Failed to fetch outbox relays", type: "error" });
+        return;
+      }
+      if (data.relayCount === 0) {
+        setMessage({ text: "No NIP-65 outbox relays found for this profile", type: "error" });
+        return;
+      }
+      setMessage({
+        text: `Fetched from ${data.relayCount} outbox relay${data.relayCount !== 1 ? "s" : ""} — ${data.totalEvents} events found, ${data.newEvents} new`,
+        type: "success",
+      });
+    } catch {
+      setMessage({ text: "Network error", type: "error" });
+    } finally {
+      setFetchingOutbox(false);
+    }
+  };
+
+  const anyLoading = reloadingProfile || recheckingRelay || deepFetching || fetchingOutbox;
 
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 space-y-3">
@@ -179,6 +209,18 @@ export default function ProfileActionBar({ pubkeyHex, onProfileReloaded }: Props
           className="rounded bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {deepFetching ? "Deep Fetching..." : "Deep Fetch All"}
+        </button>
+
+        {/* Divider */}
+        <div className="h-6 w-px bg-zinc-700" />
+
+        {/* Fetch Outbox Relays */}
+        <button
+          onClick={handleFetchOutbox}
+          disabled={anyLoading}
+          className="rounded bg-purple-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {fetchingOutbox ? "Fetching Outbox..." : "Fetch Outbox"}
         </button>
       </div>
 
