@@ -99,6 +99,8 @@ model PubkeyStats {
   relayDistribution       String   // JSON: [{relay, count}]
   dmActivityDistribution  String?  // JSON: [{hour, count}] for kind 4/1059
   nip65Relays             String?  // JSON: Nip65Relay[] (markers, health, eventPercent)
+  relayHealthScore        String?  // JSON: RelayHealthReport
+  timezoneTimeline        String?  // JSON: TimezoneWindow[]
   totalEvents             Int
   earliestEvent           Int
   latestEvent             Int
