@@ -177,6 +177,11 @@ export default function AnalyticsTab({ pubkeyHex, npub }: { pubkeyHex: string; n
             <p className="text-xs text-zinc-500 mb-3">
               Declared relay list from kind 10002
             </p>
+            {data.relayHealth && data.relayHealth.issues.length > 0 && (
+              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                {data.relayHealth.issues.length} issue{data.relayHealth.issues.length > 1 ? "s" : ""} — see Relay Health tab
+              </span>
+            )}
             <div className="flex flex-wrap gap-2">
               {data.nip65Relays.map((relay) => {
                 let host: string;

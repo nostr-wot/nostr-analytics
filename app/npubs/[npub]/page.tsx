@@ -10,6 +10,7 @@ import type {
   StoredCacheResponse,
   KindCount,
   DetailTab,
+  AnalyticsData,
 } from "@/lib/types";
 import FilterPills from "../../components/FilterPills";
 import Pagination from "../../components/Pagination";
@@ -17,6 +18,7 @@ import EventCard from "../../components/EventCard";
 import CacheResponseCard from "../../components/CacheResponseCard";
 import ProfileHeader from "../../components/ProfileHeader";
 import AnalyticsTab from "../../components/AnalyticsTab";
+import RelayHealthTab from "../../components/RelayHealthTab";
 import ProfileActionBar from "../../components/ProfileActionBar";
 
 export default function NpubDetailPage() {
@@ -44,6 +46,8 @@ export default function NpubDetailPage() {
   const [total, setTotal] = useState(0);
   const [expandedEvent, setExpandedEvent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [relayHealthData, setRelayHealthData] = useState<AnalyticsData | null>(null);
+  const [relayHealthLoading, setRelayHealthLoading] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -73,6 +77,17 @@ export default function NpubDetailPage() {
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
+
+  useEffect(() => {
+    if (tab !== "relay-health" || !pubkeyHex || relayHealthData) return;
+    setRelayHealthLoading(true);
+    fetch(`/api/events/analytics?pubkey=${pubkeyHex}&tz=0`)
+      .then((res) => res.json())
+      .then((d: AnalyticsData) => {
+        setRelayHealthData(d);
+        setRelayHealthLoading(false);
+      });
+  }, [tab, pubkeyHex, relayHealthData]);
 
   const fetchKinds = useCallback(async () => {
     if (!pubkeyHex) return;
@@ -173,6 +188,16 @@ export default function NpubDetailPage() {
         >
           Analytics
         </button>
+        <button
+          onClick={() => setTab("relay-health")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            tab === "relay-health"
+              ? "border-blue-500 text-blue-400"
+              : "border-transparent text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          Relay Health
+        </button>
       </div>
 
       {/* Search (events tab only) */}
@@ -220,7 +245,7 @@ export default function NpubDetailPage() {
       )}
 
       {/* Results count */}
-      {tab !== "analytics" && (
+      {tab !== "analytics" && tab !== "relay-health" && (
         <p className="text-sm text-zinc-500">
           {total} result{total !== 1 ? "s" : ""}
         </p>
@@ -229,6 +254,14 @@ export default function NpubDetailPage() {
       {/* Content */}
       {tab === "analytics" ? (
         <AnalyticsTab pubkeyHex={pubkeyHex} npub={npub} />
+      ) : tab === "relay-health" ? (
+        relayHealthLoading ? (
+          <p className="text-sm text-zinc-500">Loading relay health...</p>
+        ) : relayHealthData ? (
+          <RelayHealthTab data={relayHealthData} />
+        ) : (
+          <p className="text-sm text-zinc-500">No data available.</p>
+        )
       ) : loading ? (
         <p className="text-sm text-zinc-500">Loading...</p>
       ) : tab === "events" ? (
@@ -262,7 +295,7 @@ export default function NpubDetailPage() {
         </div>
       )}
 
-      {tab !== "analytics" && (
+      {tab !== "analytics" && tab !== "relay-health" && (
         <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
       )}
     </div>
