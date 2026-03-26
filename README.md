@@ -99,3 +99,6 @@ npm run scheduler
 ## Deployment
 
 Deployed via PM2 on an ARM64 Linux server with standalone Next.js build. See `CLAUDE.md` for deployment details.
+
+## References
+- [nostr-wot.com](https://nostr-wot.com)
