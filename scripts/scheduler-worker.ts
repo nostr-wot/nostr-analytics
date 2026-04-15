@@ -5,6 +5,7 @@ import { DEFAULT_FETCH_INTERVAL_MINUTES } from "../lib/constants";
 import { ensureRelaysExist } from "../lib/relay-health";
 import { runTimezoneEstimation } from "../lib/timezone-cron";
 import { runStatsComputation } from "../lib/stats-cron";
+import { runRetention } from "../lib/retention";
 
 const PID_FILE = path.resolve(process.cwd(), ".scheduler.pid");
 
@@ -104,10 +105,18 @@ console.log(
   `[scheduler] Started. Fetching every ${intervalMinutes} minutes.`
 );
 
+let cycleCount = 0;
+const RETENTION_EVERY_N_CYCLES = 6; // run retention every 6th cycle (~1h at 10min interval)
+
 async function runCycle() {
   await runCollectionCycle().catch(console.error);
   await runTimezoneEstimation().catch(console.error);
   await runStatsComputation().catch(console.error);
+
+  cycleCount++;
+  if (cycleCount % RETENTION_EVERY_N_CYCLES === 0) {
+    await runRetention().catch(console.error);
+  }
 }
 
 // Fix #8: Use tail-recursive setTimeout to prevent overlapping cycles
