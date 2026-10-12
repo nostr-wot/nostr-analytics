@@ -87,7 +87,7 @@ export default function RootLayout({
               </div>
               <div className="mt-8 flex flex-col items-center justify-between gap-4 border-t border-zinc-800/50 pt-6 sm:flex-row">
                 <p className="text-xs text-zinc-600">
-                  &copy; {new Date().getFullYear()} Nostr WoT. Open source under MIT License.
+                  &copy; {new Date().getFullYear()} Nostr WoT. Open source under GNU GPL v3 only.
                 </p>
                 <div className="flex items-center gap-4">
                   <a
