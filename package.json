@@ -35,5 +35,6 @@
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
     "typescript": "^5"
-  }
+  },
+  "license": "GPL-3.0-only"
 }

@@ -102,3 +102,7 @@ Deployed via PM2 on an ARM64 Linux server with standalone Next.js build. See `CL
 
 ## References
 - [nostr-wot.com](https://nostr-wot.com)
+
+## License
+
+GNU General Public License, version 3 only ([GPL-3.0-only](LICENSE)). Third-party components retain their respective licenses.
