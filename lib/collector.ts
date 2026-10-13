@@ -78,24 +78,7 @@ async function storeCacheResponse(
 ): Promise<void> {
   const newContent = JSON.stringify(content);
 
-  const existing = await prisma.cacheResponse.findUnique({
-    where: {
-      pubkeyHex_queryType_responseKind: { pubkeyHex, queryType, responseKind: kind },
-    },
-    select: { content: true },
-  });
-
-  if (existing && existing.content !== newContent) {
-    await prisma.cacheResponseLog.create({
-      data: {
-        pubkeyHex,
-        queryType,
-        responseKind: kind,
-        content: existing.content,
-      },
-    });
-  }
-
+  // Keep only the current response; historical copies have no consumers.
   await prisma.cacheResponse.upsert({
     where: {
       pubkeyHex_queryType_responseKind: {
