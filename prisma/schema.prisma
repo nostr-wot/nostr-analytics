@@ -148,3 +148,8 @@ model CacheResponseLog {
   @@index([pubkeyHex, queryType, responseKind])
   @@index([capturedAt])
 }
+
+// Persistent exclusions also apply to events returned by other profiles' queries.
+model ExcludedPubkey {
+  pubkeyHex String @id
+}
